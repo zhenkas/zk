@@ -1,300 +1,643 @@
 # RLWE-Based Polynomial Evaluation Proof
 
-## 1. Overview
+## Negacyclic Fourier-Syndrome Commitment Version
 
-This document describes a compact RLWE-based proof system for proving hidden polynomial evaluations inside PLONK-style protocols.
+## Status
 
-The construction combines:
+This document describes a research-oriented polynomial evaluation proof.
 
-- RLWE commitments,
-- Fiat-Shamir lattice proofs,
-- sparse polynomial challenges,
-- multi-point polynomial openings.
+The goal is to prove statements of the form:
 
-The main goal is:
+$$
+F(x_i)=y_i
+$$
 
-- prove evaluations of a hidden polynomial,
-- avoid interpolation attacks,
-- preserve compact proof size,
-- maintain strong soundness over small finite fields.
+for multiple public points $x_i$, while keeping the polynomial $F$ hidden.
 
----
+The construction uses an RLWE-style commitment:
 
-# 2. Base Ring
+$$
+V = A F + E
+$$
 
-We work over the ring:
+but modifies the public polynomial $A$ so that it has random zero positions in the Fourier/NTT domain.
 
-$$R_q = \mathbb{F}_q[X]/(X^n-1)$$
+This makes the commitment binding even when $F$ is not bounded, because the bounded error $E$ is forced to satisfy public Fourier-syndrome constraints.
 
-Example parameters:
-
-$$n = 1024$$
-
-$$q \approx 2^{16}$$
-
-The hidden witness polynomial is:
-
-$$F(X)$$
-
-The prover samples a small error polynomial:
-
-$$E(X)$$
+This document is not a formal security proof. It is a design sketch and security argument.
 
 ---
 
-# 3. RLWE Commitment
+# 1. Goal
 
-The prover commits to the witness using:
+The prover has a private polynomial:
 
-$$V(X) = A(X)F(X) + E(X)$$
+$$
+F \in R_q
+$$
+
+and wants to prove claims:
+
+$$
+F(x_1)=y_1,\quad F(x_2)=y_2,\quad \dots,\quad F(x_m)=y_m
+$$
+
+without revealing $F$.
+
+The verifier should learn only the claimed evaluations $(x_i,y_i)$, not the full polynomial.
+
+---
+
+# 2. Ring
+
+We work in the negacyclic ring:
+
+$$
+R_q = \mathbb{F}_q[X]/(X^N+1)
+$$
 
 where:
 
-- $$A(X)$$ is public,
-- $$F(X)$$ is hidden,
-- $$E(X)$$ is small.
+- $N$ is a power of two
+- $q$ supports a negacyclic NTT
+- multiplication is modulo $X^N+1$
 
-This commitment binds the witness polynomial to the RLWE relation.
+Thus:
 
----
+$$
+X^N=-1
+$$
 
-# 4. Sparse Polynomial Challenge
-
-A sparse Fiat-Shamir challenge polynomial is derived:
-
-$$C(X)$$
-
-Example structure:
-
-- degree $$n-1$$,
-- only 20 nonzero coefficients,
-- coefficients in $$\{-1,+1\}$$.
-
-The challenge is derived from:
-
-$$C(X)=H(t_v,V,\text{context})$$
-
-The sparse structure keeps response norms bounded while providing a very large challenge space.
+and multiplication in $R_q$ is negacyclic convolution.
 
 ---
 
-# 5. Response Polynomials
+# 3. Public Parameters
 
-The prover samples masking polynomials:
+The public parameters include:
 
-$$W_f(X)$$
+- modulus $q$
+- degree parameter $N$
+- error bound $B$
+- public polynomial $A\in R_q$
+- random Fourier-zero set $Z\subseteq\{0,\dots,N-1\}$
 
-$$W_e(X)$$
+The polynomial $A$ is generated so that:
+
+$$
+\widehat A_j=0 \quad \forall j\in Z
+$$
+
+where $\widehat A$ denotes the negacyclic NTT of $A$.
+
+For frequencies outside $Z$, $\widehat A_j$ should be nonzero and random-looking.
+
+The set $Z$ should be sampled randomly and fixed globally. Structured choices such as all odd frequencies or arithmetic progressions must be avoided.
+
+---
+
+# 4. Commitment to the Polynomial
+
+To commit to $F$, the prover samples a bounded error polynomial:
+
+$$
+E = \sum_{i=0}^{N-1} e_i X^i
+$$
+
+with:
+
+$$
+|e_i|\le B
+$$
 
 and computes:
 
-$$t_v(X)=A(X)W_f(X)+W_e(X)$$
+$$
+V = AF + E \in R_q
+$$
 
-Responses are:
+The commitment is:
 
-$$z_f(X)=W_f(X)+C(X)F(X)$$
+$${Com}(F;E)=V$$
 
-$$z_e(X)=W_e(X)+C(X)E(X)$$
+The polynomial $F$ is hidden by the RLWE-style masking term $AF+E$.
 
-All operations are performed inside:
-
-$$R_q$$
-
----
-
-# 6. Main Verification Equation
-
-Verifier checks:
-
-$$A(X)z_f(X)+z_e(X)=t_v(X)+C(X)V(X)$$
-
-because:
-
-$$A(W_f+CF)+(W_e+CE)=AW_f+W_e+C(AF+E)$$
-
-which equals:
-
-$$t_v + CV$$
-
-This proves consistency with the RLWE commitment.
+The polynomial $E$ is kept private.
 
 ---
 
-# 7. Smallness Verification
+# 5. Why Bounds on F Are Not Required
 
-Verifier checks coefficient bounds:
+If $A$ were invertible in $R_q$, then for any chosen bounded $E$, one could solve:
 
-$$|z_e[i]| < B$$
+$$
+F=A^{-1}(V-E)
+$$
 
-for all coefficients.
+So a commitment with unrestricted $F$ would not be binding.
 
-This prevents arbitrary response forgery and preserves RLWE hardness assumptions.
+The Fourier-zero construction prevents this.
+
+In the NTT domain:
+
+$$
+\widehat V_j = \widehat A_j\widehat F_j + \widehat E_j
+$$
+
+For every zero frequency $j\in Z$:
+
+$$
+\widehat A_j=0
+$$
+
+so:
+
+$$
+\widehat V_j=\widehat E_j
+$$
+
+Therefore the public commitment $V$ fixes a Fourier syndrome of the bounded error $E$:
+
+$$
+\widehat E_Z=\widehat V_Z
+$$
+
+A malicious prover cannot freely choose arbitrary bounded $E$. They must find a bounded polynomial matching the public syndrome.
+
+This is the mechanism that allows $F$ to remain unrestricted.
 
 ---
 
-# 8. Evaluation Points
+# 6. Binding Condition
 
-Evaluation points are derived from the committed state:
+Suppose the same commitment $V$ can be opened to two different polynomials:
 
-$$x_i = H(V,\text{context},i)$$
+$$
+V = AF + E = AF' + E'
+$$
 
-Importantly:
+Subtract:
 
-- the prover knows $$x_i$$ before constructing openings,
-- but cannot freely forge $$z_f$$,
-- because $$z_f$$ is bound to the RLWE commitment relation.
+$$
+A(F-F') = E'-E
+$$
 
-This removes the interpolation attack that exists without RLWE binding.
+Let:
+
+$$
+D = E'-E
+$$
+
+Since both $E$ and $E'$ are bounded by $B$, we have:
+
+$$
+|D_i|\le 2B
+$$
+
+For every $j\in Z$:
+
+$$
+\widehat A_j=0
+$$
+
+therefore:
+
+$$
+\widehat D_j=0
+$$
+
+So two different openings exist only if there is a nonzero bounded polynomial:
+
+$$
+D\ne0
+$$
+
+such that:
+
+$$
+\widehat D_Z=0
+$$
+
+The core binding assumption is:
+
+$$
+ker({NTT}_Z)\cap[-2B,2B]^N=\{0\}
+$$
+
+or at least that finding such a nonzero $D$ is infeasible.
 
 ---
 
-# 9. Polynomial Openings
+# 7. Heuristic Security Estimate
 
-The prover wishes to prove:
+For parameters:
 
-$$F(x_i)=y_i$$
+- $N=1024$
+- $|Z|=512$
+- $q=2^{16}$
+- $B=2^5=32$
 
-for multiple points.
+The number of possible bounded differences is approximately:
 
-For each point:
+$$
+(4B+1)^N = 129^{1024}
+$$
 
-$$t_i = W_f(x_i)$$
+If using the simpler bound for one error vector:
 
-Verifier checks:
+$$
+(2B+1)^N = 65^{1024}
+$$
 
-$$z_f(x_i)=t_i+C(x_i)y_i$$
+The probability that a random vector satisfies $|Z|=512$ independent Fourier-zero equations is:
 
-because:
+$$
+q^{-512}=2^{-8192}
+$$
 
-$$z_f(x_i)=W_f(x_i)+C(x_i)F(x_i)$$
+For bounded error vectors, the heuristic expected number is:
+
+$$
+\frac{65^{1024}}{(2^{16})^{512}}
+\approx 2^{-2025}
+$$
+
+For bounded differences, the estimate is:
+
+$$
+\frac{129^{1024}}{(2^{16})^{512}}
+\approx 2^{-1000}
+$$
+
+Both are extremely small under the random-subspace heuristic.
+
+This is not a proof. It assumes the selected Fourier rows behave like random linear constraints on bounded coefficient vectors.
+
+---
+
+# 8. Why Random Z Is Important
+
+The number $|Z|$ is not enough. The positions matter.
+
+Bad example:
+
+$$
+Z=\{1,3,5,\dots,N-1\}
+$$
+
+Then:
+
+$$
+D(X)=1+X^{N/2}
+$$
+
+has very small coefficients and satisfies:
+
+$$
+\widehat D_Z=0
+$$
+
+So structured choices of $Z$ can destroy binding.
+
+Good practice:
+
+- choose $Z$ uniformly at random
+- reject obvious structured sets
+- test for low-weight annihilators such as $1\pm X^r$
+- experimentally search for short kernel vectors
+
+---
+
+# 9. Evaluation Proof
+
+After committing:
+
+$$
+V=AF+E
+$$
+
+The prover wants to prove:
+
+$$
+F(x_i)=y_i
+$$
+
+for public points $x_i$.
+
+The prover must convince the verifier that the hidden committed polynomial $F$ evaluates correctly at these points, without revealing $F$.
+
+For one point $x$, the condition:
+
+$$
+F(x)=y
+$$
+
+is equivalent to saying:
+
+$$
+F(X)-y
+$$
+
+is divisible by:
+
+$$
+X-x
+$$
+
+So there exists a witness polynomial $W_x(X)$ such that:
+
+$$
+F(X)-y=(X-x)W_x(X)
+$$
+
+For multiple points, define:
+
+$$
+P(X)=\prod_{i=1}^m (X-x_i)
+$$
+
+and let $Y(X)$ be the interpolation polynomial satisfying:
+
+$$
+Y(x_i)=y_i
+$$
+
+Then the evaluation statement is:
+
+$$
+F(X)-Y(X)=P(X)W(X)
+$$
+
+for some witness polynomial $W$.
+
+---
+
+# 10. Combining Commitment and Evaluation
+
+The proof must show knowledge of polynomials:
+
+$$
+F,E,W
+$$
+
+such that:
+
+$$
+V=AF+E
+$$
+
+$$
+F-Y=PW
+$$
 
 and:
 
-$$F(x_i)=y_i$$
+$$
+|E_i|\le B
+$$
 
-The verifier must additionally ensure:
+The verifier should learn neither $F$ nor $E$.
 
-$$C(x_i)\neq0$$
+The public data are:
 
-so the challenge does not vanish at the evaluation point.
-
----
-
-# 10. Multi-Point Soundness
-
-A single opening equation over:
-
-$$\mathbb{F}_q$$
-
-provides approximately:
-
-$$1/q$$
-
-soundness.
-
-Since:
-
-$$q \approx 2^{16}$$
-
-multiple independent opening points are used.
-
-Example:
-
-- 10 independent points,
-- each checked independently.
-
-This yields approximately:
-
-$$2^{-160}$$
-
-opening soundness.
+- $A$
+- $V$
+- points $x_i$
+- claimed values $y_i$
+- zero set $Z$
+- bound $B$
 
 ---
 
-# 11. Why Interpolation Attacks No Longer Work
+# 11. Fiat-Shamir / Sigma-Style Sketch
 
-Without RLWE commitments, a prover could construct an arbitrary polynomial passing through all checked points.
+A possible proof sketch follows the standard commit-challenge-response pattern.
 
-After introducing:
+The prover samples random masking polynomials:
 
-$$V=AF+E$$
+$$
+R_F, R_E, R_W
+$$
 
-the response polynomial:
+with $R_E$ bounded or sampled from a distribution compatible with zero-knowledge.
 
-$$z_f$$
+The prover sends masked commitments corresponding to the two relations:
 
-is no longer freely selectable.
+$$
+T_1 = A R_F + R_E
+$$
 
-To forge openings, the prover would need to produce another valid decomposition:
+$$
+T_2 = R_F - P R_W
+$$
 
-$$V=AF'+E'$$
+The verifier derives challenge $c$ by Fiat-Shamir:
 
-with bounded:
+$$
+c = H(A,V,Z,x_i,y_i,T_1,T_2)
+$$
 
-$$E'$$
+The prover responds:
 
-which is assumed hard under RLWE.
+$$
+Z_F = R_F + cF
+$$
 
-Thus the interpolation attack disappears.
+$$
+Z_E = R_E + cE
+$$
 
----
+$$
+Z_W = R_W + cW
+$$
 
-# 12. Security Intuition
+The verifier checks:
 
-The protocol derives security from two layers:
+$$
+A Z_F + Z_E = T_1 + cV
+$$
 
-## RLWE Binding
+and:
 
-The commitment:
+$$
+Z_F - PZ_W = T_2 + cY
+$$
 
-$$V=AF+E$$
+The verifier also checks that $Z_E$ is within the allowed response bound, using rejection sampling or another zero-knowledge-preserving technique.
 
-prevents arbitrary witness modification.
-
-## Fiat-Shamir Challenges
-
-The sparse polynomial challenge:
-
-$$C(X)$$
-
-provides a massive challenge space while preserving bounded response norms.
-
----
-
-# 13. Proof Structure
-
-The final proof contains:
-
-- commitment polynomial:
-
-$$V(X)$$
-
-- masking commitment:
-
-$$t_v(X)$$
-
-- response polynomials:
-
-$$z_f(X), z_e(X)$$
-
-- opening pairs:
-
-$$(t_i,y_i)$$
-
-for each evaluation point.
+This proves that the same hidden $F$ is used both in the commitment relation and in the evaluation relation.
 
 ---
 
-# 14. Open Questions
+# 12. Hiding of F(x_i)
 
-The construction still requires formal analysis regarding:
+If the values $y_i$ are public, then the verifier learns those values by definition.
 
-- exact soundness bounds,
-- zero-knowledge leakage,
-- challenge distribution,
-- sparse polynomial challenge security,
-- extraction guarantees,
-- recursive composition,
-- rejection sampling requirements.
+If the goal is to prove a hidden evaluation relation without revealing $y_i$, then $Y$ must also be committed, and the proof should show:
 
-The protocol should currently be viewed as an experimental RLWE-based polynomial evaluation proof system.
+$$
+F(x_i)=Y_i
+$$
+
+or some predicate over $Y_i$, without opening the values.
+
+For example, the prover may commit to $Y$ or to individual values $y_i$, and prove consistency:
+
+$$
+F-Y=PW
+$$
+
+without revealing $Y$.
+
+This gives two modes:
+
+## Public evaluation mode
+
+The verifier learns:
+
+$$
+F(x_i)=y_i
+$$
+
+## Hidden evaluation mode
+
+The verifier learns only that committed values are consistent with evaluations of $F$, but not the values themselves.
+
+---
+
+# 13. Important Zero-Knowledge Caveat
+
+The response:
+
+$$
+Z_F = R_F+cF
+$$
+
+can leak information about $F$ unless $R_F$ is sampled from a sufficiently wide distribution and rejection sampling is used.
+
+Similarly:
+
+$$
+Z_E = R_E+cE
+$$
+
+can leak information about $E$.
+
+A complete construction must specify:
+
+- response bounds
+- masking distributions
+- rejection sampling
+- simulator strategy
+- challenge size
+- soundness error
+
+Without these details, this remains a protocol sketch, not a complete zero-knowledge proof.
+
+---
+
+# 14. What Changed From the Original Version
+
+The original idea used:
+
+$$
+V=AF+E
+$$
+
+as an RLWE-style commitment.
+
+The issue was that if $F$ is unrestricted and $A$ is invertible, then a prover can choose bounded $E$ and solve for $F$.
+
+The updated version fixes this by making $A$ non-invertible in a controlled way:
+
+$$
+\widehat A_Z=0
+$$
+
+This forces:
+
+$$
+\widehat E_Z=\widehat V_Z
+$$
+
+and makes bounded $E$ nontrivial to fake.
+
+So the commitment becomes binding because of the bounded Fourier-syndrome condition, while $F$ can remain unrestricted.
+
+---
+
+# 15. Open Problems
+
+## 15.1 Formal Binding Proof
+
+Need to prove or assume hardness of finding:
+
+$$
+D\ne0,\quad |D_i|\le2B,\quad \widehat D_Z=0
+$$
+
+for random $Z$.
+
+## 15.2 Efficient PLONK Implementation
+
+Need an efficient way to enforce:
+
+$$
+\widehat E_Z=\widehat V_Z
+$$
+
+and coefficient bounds on $E$.
+
+Options include:
+
+- in-circuit NTT
+- partial NTT constraints
+- custom gates
+- lookup-assisted butterflies
+
+## 15.3 Zero-Knowledge
+
+Need a full simulator and rejection sampling analysis.
+
+## 15.4 Hidden Evaluation Values
+
+Need a clear construction for the mode where $F(x_i)$ is proven correct but not revealed.
+
+---
+
+# 16. Summary
+
+The construction is a polynomial evaluation proof based on a negacyclic RLWE-style commitment:
+
+$$
+V=AF+E
+$$
+
+where:
+
+- $F$ is the hidden polynomial
+- $E$ is a bounded hiding/error polynomial
+- $A$ has random Fourier zeros
+- $V$ binds $F$ through the bounded Fourier syndrome of $E$
+
+The prover proves:
+
+$$
+F(x_i)=y_i
+$$
+
+by showing:
+
+$$
+F-Y=PW
+$$
+
+while also proving consistency with the commitment:
+
+$$
+V=AF+E
+$$
+
+The key new idea is that random Fourier zeros in $A$ remove the need to bound $F$, because any alternative opening would require a nonzero bounded error difference whose FFT vanishes on the selected zero set.
+
+This turns the binding problem into a bounded Fourier-kernel problem.
